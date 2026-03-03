@@ -202,6 +202,44 @@ describe('user-collapse', () => {
     expect(bubble.getAttribute('data-ls-uc-state')).toBe('collapsed');
   });
 
+  it('preserves toggled state when the same message is reprocessed', () => {
+    document.body.innerHTML = `
+      <main style="overflow-y:auto">
+        <div data-testid="conversation-turns" id="turns">
+          <div data-message-author-role="user" data-message-id="m4b" id="root">
+            <div class="user-message-bubble-color">
+              <div class="whitespace-pre-wrap">Long</div>
+            </div>
+          </div>
+        </div>
+      </main>
+    `;
+
+    const main = document.querySelector('main') as HTMLElement;
+    mockLayout(main, { scrollHeight: 2000, clientHeight: 800 });
+
+    const text = document.querySelector('.whitespace-pre-wrap') as HTMLElement;
+    mockLayout(text, { scrollHeight: 1200, clientHeight: 120, rectHeight: 1200 });
+
+    const ctrl = installUserCollapse();
+    ctrl.enable();
+    lastCtrl = ctrl;
+
+    const bubble = document.querySelector('.user-message-bubble-color') as HTMLElement;
+    const btn = bubble.querySelector('button.ls-uc-toggle') as HTMLButtonElement;
+    expect(bubble.getAttribute('data-ls-uc-state')).toBe('collapsed');
+
+    btn.click();
+    expect(bubble.getAttribute('data-ls-uc-state')).toBe('expanded');
+
+    const turns = document.getElementById('turns') as HTMLElement;
+    const mo = getObserverForContainer(turns);
+    const root = document.getElementById('root') as HTMLElement;
+    mo.trigger([{ type: 'childList', addedNodes: [root] }]);
+
+    expect(bubble.getAttribute('data-ls-uc-state')).toBe('expanded');
+  });
+
   it('does not duplicate toggles when processing the same message again', () => {
     document.body.innerHTML = `
       <main style="overflow-y:auto">

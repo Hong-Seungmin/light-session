@@ -230,6 +230,7 @@ function ensureCollapseUi(
   text: HTMLElement,
   defaultExpanded: boolean
 ): void {
+  const wasProcessed = root.hasAttribute(PROCESSED_ATTR);
   root.setAttribute(PROCESSED_ATTR, '1');
 
   bubble.classList.add('ls-uc-bubble');
@@ -240,7 +241,9 @@ function ensureCollapseUi(
   const textId = text.id || `ls-uc-text-${safeIdFragment(messageId)}`;
   text.id = textId;
 
-  bubble.setAttribute(STATE_ATTR, defaultExpanded ? 'expanded' : 'collapsed');
+  if (!wasProcessed || !bubble.hasAttribute(STATE_ATTR)) {
+    bubble.setAttribute(STATE_ATTR, defaultExpanded ? 'expanded' : 'collapsed');
+  }
 
   const btn = ensureButton(bubble, textId);
   updateButtonUi(btn, bubble.getAttribute(STATE_ATTR) === 'expanded');
