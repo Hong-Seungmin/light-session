@@ -44,9 +44,16 @@ function copyManifest() {
     fs.copyFileSync(manifestSrc, manifestDest);
     console.log(`✓ Copied manifest.${target}.json → manifest.json`);
   } else {
-    // For Firefox, create symlink to manifest.firefox.json
-    fs.symlinkSync('manifest.firefox.json', manifestDest);
-    console.log('✓ Created symlink manifest.json → manifest.firefox.json');
+    // For Firefox, prefer symlink for local development convenience.
+    // Some environments (e.g. restricted CI runners) block symlink creation,
+    // so we gracefully fall back to a normal file copy.
+    try {
+      fs.symlinkSync('manifest.firefox.json', manifestDest);
+      console.log('✓ Created symlink manifest.json → manifest.firefox.json');
+    } catch (error) {
+      fs.copyFileSync(manifestSrc, manifestDest);
+      console.warn(`⚠️  Symlink not available, copied manifest instead (${error.code || 'unknown error'})`);
+    }
   }
 }
 
