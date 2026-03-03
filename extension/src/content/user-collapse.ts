@@ -1,5 +1,5 @@
 /**
- * LightSession for ChatGPT - Collapse long user messages (presentation-only)
+ * LightSession for ChatGPT - Collapse long messages (presentation-only)
  *
  * Constraints:
  * - Do not truncate or rewrite message text content (no innerHTML rewriting).
@@ -13,7 +13,9 @@ const STYLE_ID = 'lightsession-user-collapse-styles';
 const PROCESSED_ATTR = 'data-ls-uc-processed';
 const STATE_ATTR = 'data-ls-uc-state'; // "collapsed" | "expanded"
 
-const USER_ROOT_SELECTOR = '[data-message-author-role="user"][data-message-id]';
+const COLLAPSIBLE_ROOT_SELECTOR =
+  '[data-message-author-role="user"][data-message-id], [data-message-author-role="assistant"][data-message-id]';
+const ASSISTANT_ROOT_SELECTOR = '[data-message-author-role="assistant"][data-message-id]';
 const ANY_ROLE_ROOT_SELECTOR = '[data-message-author-role][data-message-id]';
 const BUBBLE_SELECTOR = '.user-message-bubble-color';
 const TEXT_SELECTORS = ['.whitespace-pre-wrap', '.markdown.prose', '.markdown', '.prose'] as const;
@@ -34,7 +36,7 @@ function ensureStyles(): void {
   const style = document.createElement('style');
   style.id = STYLE_ID;
   style.textContent = `
-/* LightSession: user message collapse */
+/* LightSession: message collapse */
 .ls-uc-bubble { position: relative; }
 .ls-uc-text { position: relative; }
 
@@ -222,7 +224,12 @@ function removeCollapseUi(root: HTMLElement, bubble: HTMLElement, text: HTMLElem
   root.removeAttribute(PROCESSED_ATTR);
 }
 
-function ensureCollapseUi(root: HTMLElement, bubble: HTMLElement, text: HTMLElement): void {
+function ensureCollapseUi(
+  root: HTMLElement,
+  bubble: HTMLElement,
+  text: HTMLElement,
+  defaultExpanded: boolean
+): void {
   root.setAttribute(PROCESSED_ATTR, '1');
 
   bubble.classList.add('ls-uc-bubble');
@@ -233,22 +240,24 @@ function ensureCollapseUi(root: HTMLElement, bubble: HTMLElement, text: HTMLElem
   const textId = text.id || `ls-uc-text-${safeIdFragment(messageId)}`;
   text.id = textId;
 
-  if (!bubble.getAttribute(STATE_ATTR)) {
-    bubble.setAttribute(STATE_ATTR, 'collapsed');
-  }
+  bubble.setAttribute(STATE_ATTR, defaultExpanded ? 'expanded' : 'collapsed');
 
   const btn = ensureButton(bubble, textId);
   updateButtonUi(btn, bubble.getAttribute(STATE_ATTR) === 'expanded');
 
-  logDebug('User collapse applied for message:', messageId);
+  logDebug('Message collapse applied for message:', messageId);
 }
 
-function processUserMessageRoot(root: HTMLElement): void {
-  const bubble = root.querySelector<HTMLElement>(BUBBLE_SELECTOR);
-  if (!bubble) return;
+function processMessageRoot(root: HTMLElement, latestAssistantMessageId: string | null): void {
+  const bubble = root.querySelector<HTMLElement>(BUBBLE_SELECTOR) ?? root;
 
-  const text = findTextContainer(bubble);
+  const text = findTextContainer(bubble) ?? findTextContainer(root);
   if (!text) return;
+
+  const role = root.getAttribute('data-message-author-role');
+  const messageId = root.getAttribute('data-message-id') || '';
+  const shouldStartExpanded =
+    role === 'assistant' && messageId.length > 0 && messageId === latestAssistantMessageId;
 
   // Measure for "long" before clamping. Caller batches this in rAF.
   const fullHeight = text.scrollHeight;
@@ -260,21 +269,22 @@ function processUserMessageRoot(root: HTMLElement): void {
     return;
   }
 
-  ensureCollapseUi(root, bubble, text);
+  ensureCollapseUi(root, bubble, text, shouldStartExpanded);
 }
 
-function collectUserRootsFromAddedNode(node: unknown): HTMLElement[] {
+function collectCollapsibleRootsFromAddedNode(node: unknown): HTMLElement[] {
   if (!(node instanceof HTMLElement)) return [];
 
   // Avoid duplicate work; pendingRoots is a Set but array creation can still be expensive on large mutation batches.
-  if (node.matches(USER_ROOT_SELECTOR)) return [node];
+  if (node.matches(COLLAPSIBLE_ROOT_SELECTOR)) return [node];
 
   const out = new Set<HTMLElement>();
 
-  const closest = node.closest<HTMLElement>(USER_ROOT_SELECTOR);
+  const closest = node.closest<HTMLElement>(COLLAPSIBLE_ROOT_SELECTOR);
   if (closest) out.add(closest);
 
-  for (const r of Array.from(node.querySelectorAll<HTMLElement>(USER_ROOT_SELECTOR))) out.add(r);
+  for (const r of Array.from(node.querySelectorAll<HTMLElement>(COLLAPSIBLE_ROOT_SELECTOR)))
+    out.add(r);
 
   return Array.from(out);
 }
@@ -304,8 +314,14 @@ export function installUserCollapse(): UserCollapseController {
       if (!enabled) return;
       const wasPinned = scroller ? isPinnedToBottom(scroller) : false;
 
+      const assistantRoots = container?.querySelectorAll<HTMLElement>(ASSISTANT_ROOT_SELECTOR);
+      const latestAssistantMessageId =
+        assistantRoots && assistantRoots.length > 0
+          ? assistantRoots.item(assistantRoots.length - 1)?.getAttribute('data-message-id')
+          : null;
+
       for (const root of pendingRoots) {
-        processUserMessageRoot(root);
+        processMessageRoot(root, latestAssistantMessageId ?? null);
       }
       pendingRoots.clear();
 
@@ -344,7 +360,7 @@ export function installUserCollapse(): UserCollapseController {
           // Avoid for..of over NodeList (requires DOM iterable lib typings).
           for (let i = 0; i < m.addedNodes.length; i++) {
             const n = m.addedNodes[i];
-            const roots = collectUserRootsFromAddedNode(n);
+            const roots = collectCollapsibleRootsFromAddedNode(n);
             for (const r of roots) pendingRoots.add(r);
           }
           continue;
@@ -354,10 +370,10 @@ export function installUserCollapse(): UserCollapseController {
           if (m.target instanceof HTMLElement) {
             // Attribute changes are usually on the root node, but can also happen on wrappers.
             // Include descendants to handle node recycling across chats.
-            if (m.target.matches(USER_ROOT_SELECTOR)) {
+            if (m.target.matches(COLLAPSIBLE_ROOT_SELECTOR)) {
               pendingRoots.add(m.target);
             } else {
-              const roots = collectUserRootsFromAddedNode(m.target);
+              const roots = collectCollapsibleRootsFromAddedNode(m.target);
               for (const r of roots) pendingRoots.add(r);
             }
           }
@@ -375,7 +391,7 @@ export function installUserCollapse(): UserCollapseController {
     });
 
     // Initial scan.
-    const initial = Array.from(container.querySelectorAll<HTMLElement>(USER_ROOT_SELECTOR));
+    const initial = Array.from(container.querySelectorAll<HTMLElement>(COLLAPSIBLE_ROOT_SELECTOR));
     for (const r of initial) pendingRoots.add(r);
     if (pendingRoots.size > 0) scheduleProcess();
   };
@@ -497,10 +513,9 @@ export function installUserCollapse(): UserCollapseController {
     // Remove UI affordances/classes.
     const main = getMain();
     const scope = main || document;
-    for (const root of Array.from(scope.querySelectorAll<HTMLElement>(USER_ROOT_SELECTOR))) {
-      const bubble = root.querySelector<HTMLElement>(BUBBLE_SELECTOR);
-      if (!bubble) continue;
-      const text = findTextContainer(bubble);
+    for (const root of Array.from(scope.querySelectorAll<HTMLElement>(COLLAPSIBLE_ROOT_SELECTOR))) {
+      const bubble = root.querySelector<HTMLElement>(BUBBLE_SELECTOR) ?? root;
+      const text = findTextContainer(bubble) ?? findTextContainer(root);
       if (text) removeCollapseUi(root, bubble, text);
     }
 

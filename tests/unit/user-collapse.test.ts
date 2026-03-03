@@ -36,7 +36,10 @@ class MockMutationObserver {
   }
 }
 
-function mockLayout(el: HTMLElement, opts: { scrollHeight?: number; clientHeight?: number; rectHeight?: number }) {
+function mockLayout(
+  el: HTMLElement,
+  opts: { scrollHeight?: number; clientHeight?: number; rectHeight?: number }
+) {
   if (typeof opts.scrollHeight === 'number') {
     Object.defineProperty(el, 'scrollHeight', {
       value: opts.scrollHeight,
@@ -267,6 +270,40 @@ describe('user-collapse', () => {
     expect(mo.disconnected).toBe(true);
     expect(bubble.querySelector('button.ls-uc-toggle')).toBeNull();
     expect(document.getElementById('lightsession-user-collapse-styles')).toBeNull();
+  });
+
+  it('keeps only the latest long assistant message expanded by default', () => {
+    document.body.innerHTML = `
+      <main style="overflow-y:auto">
+        <div data-testid="conversation-turns">
+          <div data-message-author-role="assistant" data-message-id="a1">
+            <div class="whitespace-pre-wrap">Older assistant reply</div>
+          </div>
+          <div data-message-author-role="assistant" data-message-id="a2">
+            <div class="whitespace-pre-wrap">Latest assistant reply</div>
+          </div>
+        </div>
+      </main>
+    `;
+
+    const main = document.querySelector('main') as HTMLElement;
+    mockLayout(main, { scrollHeight: 2400, clientHeight: 800 });
+
+    const texts = Array.from(document.querySelectorAll('.whitespace-pre-wrap')) as HTMLElement[];
+    for (const text of texts) {
+      mockLayout(text, { scrollHeight: 1200, clientHeight: 120, rectHeight: 1200 });
+    }
+
+    const ctrl = installUserCollapse();
+    ctrl.enable();
+    lastCtrl = ctrl;
+
+    const roots = Array.from(
+      document.querySelectorAll('[data-message-author-role="assistant"][data-message-id]')
+    ) as HTMLElement[];
+
+    expect(roots[0]?.getAttribute('data-ls-uc-state')).toBe('collapsed');
+    expect(roots[1]?.getAttribute('data-ls-uc-state')).toBe('expanded');
   });
 
   it('processes user roots that become eligible via attribute changes (SPA recycling)', () => {
